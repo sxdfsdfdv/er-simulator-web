@@ -5,8 +5,10 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Database,
   Download,
   Flame,
@@ -46,6 +48,9 @@ import {
   saveScenario,
   saveStoredSupabaseConfig,
   SupabaseConfig,
+  testSupabaseConnection,
+  SCHEMA_SQL,
+  TestResult,
 } from '@/lib/supabase';
 
 export default function Home() {
@@ -70,6 +75,9 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'compare' | 'timeseries' | 'tradeoff' | 'cloud'>('compare');
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [supabaseCfg, setSupabaseCfg] = useState<SupabaseConfig>({ url: '', anonKey: '' });
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
   const [scenarios, setScenarios] = useState<CloudScenario[]>([]);
   const [isCloudStorage, setIsCloudStorage] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1066,19 +1074,25 @@ export default function Home() {
       {/* -------------------------------------------------------------------- */}
       {showConfigModal && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#E2E8F0] space-y-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-[#E2E8F0] space-y-4">
             <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-3">
               <div className="flex items-center space-x-2 font-bold text-[#0B1F3A]">
                 <Database className="w-5 h-5 text-[#1E5AA8]" />
                 <span>Supabase 클라우드 데이터베이스 설정</span>
               </div>
-              <button onClick={() => setShowConfigModal(false)} className="text-slate-400 hover:text-slate-600 text-sm">
+              <button
+                onClick={() => {
+                  setShowConfigModal(false);
+                  setTestResult(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 text-sm"
+              >
                 ✕
               </button>
             </div>
 
             <p className="text-xs text-[#64748B]">
-              Supabase 프로젝트의 <b>Project URL</b>과 <b>Anon Key</b>를 입력하시면 클라우드 PostgreSQL에 시뮬레이션 데이터가 실시간 동기화됩니다.
+              Supabase 프로젝트의 <b>Project URL</b>과 <b>Anon API Key</b>를 입력하시면 클라우드 PostgreSQL에 시뮬레이션 데이터가 실시간 동기화됩니다.
             </p>
 
             <div className="space-y-3">
@@ -1088,34 +1102,141 @@ export default function Home() {
                   type="text"
                   placeholder="https://xyzcompany.supabase.co"
                   value={supabaseCfg.url}
-                  onChange={(e) => setSupabaseCfg({ ...supabaseCfg, url: e.target.value.trim() })}
-                  className="w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-[#1E5AA8] outline-none"
+                  onChange={(e) => {
+                    setSupabaseCfg({ ...supabaseCfg, url: e.target.value.trim() });
+                    setTestResult(null);
+                  }}
+                  className="w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-[#1E5AA8] outline-none font-mono"
                 />
+                <p className="text-[11px] text-[#94A3B8] mt-1">
+                  💡 Supabase ⚙️ Project Settings &gt; Data API 에서 <b>Project URL</b> 복사
+                </p>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-[#0B1F3A] block mb-1">Anon API Key</label>
+                <label className="text-xs font-semibold text-[#0B1F3A] block mb-1">Anon / Publishable API Key</label>
                 <input
                   type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  placeholder="sb_publishable_... 또는 eyJhbGciOi..."
                   value={supabaseCfg.anonKey}
-                  onChange={(e) => setSupabaseCfg({ ...supabaseCfg, anonKey: e.target.value.trim() })}
-                  className="w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-[#1E5AA8] outline-none"
+                  onChange={(e) => {
+                    setSupabaseCfg({ ...supabaseCfg, anonKey: e.target.value.trim() });
+                    setTestResult(null);
+                  }}
+                  className="w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-[#1E5AA8] outline-none font-mono"
                 />
+                <p className="text-[11px] text-[#94A3B8] mt-1">
+                  💡 Project API Keys 항목의 <b>anon / public</b> 키
+                </p>
               </div>
             </div>
 
-            <div className="flex justify-end space-x-2 pt-2">
+            {/* Test Connection Feedback */}
+            {testResult && (
+              <div className="pt-1">
+                {testResult.ok ? (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-start space-x-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-bold">{testResult.message}</p>
+                      <p className="text-[11px] text-emerald-600 mt-0.5">클라우드 동기화 모드로 전환되었습니다. 창을 닫습니다...</p>
+                    </div>
+                  </div>
+                ) : testResult.tableMissing ? (
+                  <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs space-y-2.5">
+                    <div className="flex items-start space-x-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-bold">Supabase 접속 성공! 하지만 테이블이 아직 없습니다.</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">
+                          Supabase 대시보드 좌측 <b>SQL Editor</b> 메뉴에서 아래 SQL을 실행해주세요.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between bg-white border border-amber-200 rounded-lg p-2">
+                      <span className="text-[11px] font-mono text-slate-600 truncate mr-2">CREATE TABLE simulation_runs ...</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(SCHEMA_SQL);
+                          setCopiedSql(true);
+                          setTimeout(() => setCopiedSql(false), 2000);
+                        }}
+                        className="shrink-0 flex items-center space-x-1 px-2.5 py-1 bg-amber-600 text-white rounded text-[11px] font-semibold hover:bg-amber-700 transition"
+                      >
+                        {copiedSql ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSql ? '복사 완료!' : 'SQL 복사'}</span>
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-amber-600">
+                      👉 복사 후 Supabase SQL Editor에 붙여넣고 <b>[Run]</b>을 누른 뒤, 다시 <b>[연결 테스트 및 저장]</b>을 클릭하세요!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-start space-x-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-bold">연결 실패</p>
+                      <p className="text-[11px] text-red-600 mt-0.5">{testResult.message}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-2 border-t border-[#E2E8F0]">
               <button
+                type="button"
                 onClick={() => {
-                  saveStoredSupabaseConfig(supabaseCfg);
-                  setShowConfigModal(false);
-                  loadScenarios();
+                  navigator.clipboard.writeText(SCHEMA_SQL);
+                  setCopiedSql(true);
+                  setTimeout(() => setCopiedSql(false), 2000);
                 }}
-                className="px-4 py-2 bg-[#1E5AA8] text-white rounded-lg text-xs font-bold hover:bg-[#184886]"
+                className="flex items-center space-x-1 text-xs text-[#64748B] hover:text-[#0B1F3A]"
               >
-                설정 저장 및 연결
+                {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedSql ? 'SQL 복사됨' : '테이블 생성 SQL 보기'}</span>
               </button>
+
+              <div className="flex space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConfigModal(false);
+                    setTestResult(null);
+                  }}
+                  className="px-3 py-2 bg-slate-100 text-[#64748B] rounded-lg text-xs font-semibold hover:bg-slate-200"
+                >
+                  닫기
+                </button>
+                <button
+                  type="button"
+                  disabled={isTesting}
+                  onClick={async () => {
+                    setIsTesting(true);
+                    setTestResult(null);
+                    try {
+                      const res = await testSupabaseConnection(supabaseCfg.url, supabaseCfg.anonKey);
+                      setTestResult(res);
+                      if (res.ok) {
+                        saveStoredSupabaseConfig(supabaseCfg);
+                        await loadScenarios();
+                        setTimeout(() => {
+                          setShowConfigModal(false);
+                          setTestResult(null);
+                        }, 1200);
+                      }
+                    } catch (e: any) {
+                      setTestResult({ ok: false, message: e?.message || '연결 중 오류가 발생했습니다.' });
+                    } finally {
+                      setIsTesting(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#1E5AA8] text-white rounded-lg text-xs font-bold hover:bg-[#184886] flex items-center space-x-1.5 disabled:opacity-50"
+                >
+                  {isTesting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isTesting ? '연결 확인 중...' : '연결 테스트 및 저장'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
