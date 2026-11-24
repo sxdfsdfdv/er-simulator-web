@@ -14,10 +14,13 @@ export interface SupabaseConfig {
 }
 
 export function getStoredSupabaseConfig(): SupabaseConfig {
+  const DEFAULT_URL = 'https://syiautycpwumhpsjxnim.supabase.co';
+  const DEFAULT_KEY = 'sb_publishable_JTzpLR81pzOcpYQMfFhcgQ_ueCeIw7y';
+
   if (typeof window === 'undefined') {
     return {
-      url: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+      url: process.env.NEXT_PUBLIC_SUPABASE_URL || DEFAULT_URL,
+      anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_KEY,
     };
   }
 
@@ -30,8 +33,8 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
   }
 
   return {
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-    anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL || DEFAULT_URL,
+    anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_KEY,
   };
 }
 
