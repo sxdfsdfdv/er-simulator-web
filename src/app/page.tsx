@@ -15,6 +15,7 @@ import {
   HelpCircle,
   Layers,
   LineChart as LineChartIcon,
+  Play,
   RefreshCw,
   Sliders,
   Sparkles,
@@ -80,21 +81,46 @@ export default function Home() {
   const [copiedSql, setCopiedSql] = useState(false);
   const [scenarios, setScenarios] = useState<CloudScenario[]>([]);
   const [isCloudStorage, setIsCloudStorage] = useState(false);
+  const [scenarioLoadError, setScenarioLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+  const [appliedMsg, setAppliedMsg] = useState('');
+  const [selectedScenario, setSelectedScenario] = useState<CloudScenario | null>(null);
+
+  // 시나리오 파라미터를 현재 시뮬레이션에 적용하는 함수
+  const handleApplyScenario = (sc: CloudScenario) => {
+    setArrivalRate(sc.arrival_rate);
+    setDoctorMu(sc.doctor_mu);
+    setNumDoctors(sc.num_doctors);
+    setNurseMu(sc.nurse_mu);
+    setNumNurses(sc.num_nurses);
+    if (sc.num_beds === null) {
+      setInfiniteBeds(true);
+    } else {
+      setInfiniteBeds(false);
+      setNumBeds(sc.num_beds);
+    }
+    setSimHours(sc.sim_hours);
+    setSelectedScenario(null);
+    setActiveTab('compare');
+    setAppliedMsg(`"${sc.scenario_name}" 파라미터가 시뮬레이션에 적용되었습니다!`);
+    setTimeout(() => setAppliedMsg(''), 5000);
+  };
 
   // Load Supabase configuration & initial scenarios
+  const loadScenarios = async () => {
+    setScenarioLoadError(null);
+    const res = await fetchScenarios();
+    setScenarios(res.data);
+    setIsCloudStorage(res.isCloud);
+    if ((res as any).error) setScenarioLoadError((res as any).error);
+  };
+
   useEffect(() => {
     const cfg = getStoredSupabaseConfig();
     setSupabaseCfg(cfg);
     loadScenarios();
   }, []);
-
-  const loadScenarios = async () => {
-    const res = await fetchScenarios();
-    setScenarios(res.data);
-    setIsCloudStorage(res.isCloud);
-  };
 
   // ---------------------------------------------------------------------------
   // 2. Real-Time Simulation & Theoretical Calculations
@@ -605,6 +631,22 @@ export default function Home() {
 
         {/* Right Content Area */}
         <main className="flex-1 space-y-5">
+          {/* 적용 완료 알림 토스트 배너 */}
+          {appliedMsg && (
+            <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-emerald-900 shadow-md">
+              <div className="flex items-center space-x-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span className="text-sm font-semibold">{appliedMsg}</span>
+              </div>
+              <button
+                onClick={() => setAppliedMsg('')}
+                className="text-emerald-700 hover:text-emerald-900 text-xs px-2.5 py-1 rounded bg-emerald-100 hover:bg-emerald-200 font-medium"
+              >
+                확인
+              </button>
+            </div>
+          )}
+
           {/* ------------------------------------------------------------------ */}
           {/* Status & Bottleneck Alert Banner */}
           {/* ------------------------------------------------------------------ */}
@@ -1014,6 +1056,28 @@ export default function Home() {
                       </button>
                     </div>
 
+                    {/* 연결 에러 배너 */}
+                    {scenarioLoadError && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs space-y-1">
+                        <p className="font-bold text-amber-800">⚠️ Supabase 연결 실패 — 로컬 데이터를 표시합니다</p>
+                        <p className="text-amber-700 font-mono">{scenarioLoadError}</p>
+                        <button
+                          onClick={() => setShowConfigModal(true)}
+                          className="mt-1 px-2.5 py-1 bg-[#1E5AA8] text-white rounded text-[11px] font-semibold"
+                        >
+                          ☁️ Supabase 설정 열기
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 빈 목록 안내 */}
+                    {scenarios.length === 0 && !scenarioLoadError && (
+                      <div className="p-4 text-center text-sm text-slate-400 border border-dashed border-[#E2E8F0] rounded-lg">
+                        저장된 시나리오가 없습니다. 왼쪽 패널에서 &quot;현재 시나리오 클라우드 DB 저장&quot; 버튼을 클릭해보세요.
+                      </div>
+                    )}
+
+                    {scenarios.length > 0 && (
                     <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
                       <table className="w-full text-xs text-left">
                         <thead className="bg-[#EEF3FA] text-[#0B1F3A] font-semibold border-b border-[#E2E8F0]">
@@ -1029,8 +1093,15 @@ export default function Home() {
                         </thead>
                         <tbody className="divide-y divide-[#E2E8F0]">
                           {scenarios.map((sc) => (
-                            <tr key={sc.id} className="hover:bg-slate-50/80">
-                              <td className="py-2.5 px-3 font-semibold text-[#0B1F3A]">{sc.scenario_name}</td>
+                            <tr
+                              key={sc.id}
+                              className="hover:bg-blue-50/60 cursor-pointer transition-colors"
+                              onClick={() => setSelectedScenario(sc)}
+                            >
+                              <td className="py-2.5 px-3 font-semibold text-[#0B1F3A]">
+                                {sc.scenario_name}
+                                <span className="block text-[9px] text-slate-400 font-normal mt-0.5">클릭하여 상세 보기 및 적용</span>
+                              </td>
                               <td className="py-2.5 px-3">{sc.arrival_rate} 명/h</td>
                               <td className="py-2.5 px-3">{sc.num_doctors} 명</td>
                               <td className="py-2.5 px-3 font-medium">{(sc.doctor_rho * 100).toFixed(1)}%</td>
@@ -1049,18 +1120,33 @@ export default function Home() {
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-right">
-                                <button
-                                  onClick={() => sc.id && handleDeleteScenario(sc.id)}
-                                  className="text-slate-400 hover:text-rose-600 p-1"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="flex items-center justify-end space-x-1.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleApplyScenario(sc);
+                                    }}
+                                    className="px-2.5 py-1 text-xs font-semibold bg-[#1E5AA8] hover:bg-[#154687] text-white rounded-md shadow-sm transition-colors flex items-center space-x-1 cursor-pointer"
+                                    title="이 시나리오 파라미터를 시뮬레이션에 즉시 적용"
+                                  >
+                                    <Play className="w-3 h-3 fill-current" />
+                                    <span>적용</span>
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); sc.id && handleDeleteScenario(sc.id); }}
+                                    className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
+                                    title="삭제"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1068,6 +1154,123 @@ export default function Home() {
           </div>
         </main>
       </div>
+
+      {/* -------------------------------------------------------------------- */}
+      {/* Scenario Detail Modal */}
+      {/* -------------------------------------------------------------------- */}
+      {selectedScenario && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-[#E2E8F0] space-y-5 max-h-[90vh] overflow-y-auto">
+
+            {/* 헤더 */}
+            <div className="flex justify-between items-start border-b border-[#E2E8F0] pb-4">
+              <div>
+                <div className="flex items-center space-x-2 mb-1">
+                  <Layers className="w-5 h-5 text-[#1E5AA8]" />
+                  <h2 className="text-lg font-bold text-[#0B1F3A]">{selectedScenario.scenario_name}</h2>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      selectedScenario.status === 'OK'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : selectedScenario.status === 'WARNING'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-rose-100 text-rose-800'
+                    }`}
+                  >
+                    {selectedScenario.status}
+                  </span>
+                </div>
+                {selectedScenario.created_at && (
+                  <p className="text-xs text-slate-400 flex items-center space-x-1">
+                    <Clock className="w-3 h-3" />
+                    <span>저장일시: {new Date(selectedScenario.created_at).toLocaleString('ko-KR')}</span>
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => handleApplyScenario(selectedScenario)}
+                  className="px-3 py-1.5 text-xs font-semibold bg-[#1E5AA8] hover:bg-[#154687] text-white rounded-lg shadow-sm transition-colors flex items-center space-x-1 cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>즉시 적용</span>
+                </button>
+                <button
+                  onClick={() => setSelectedScenario(null)}
+                  className="text-slate-400 hover:text-slate-600 text-lg leading-none p-1 rounded hover:bg-slate-100"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* 파라미터 카드 그리드 */}
+            <div>
+              <p className="text-xs font-semibold text-[#1E5AA8] uppercase tracking-wider mb-2 flex items-center space-x-1">
+                <Sliders className="w-3.5 h-3.5" />
+                <span>시뮬레이션 파라미터</span>
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: '도착률 (λ)', value: `${selectedScenario.arrival_rate} 명/h`, icon: <Activity className="w-4 h-4 text-[#1E5AA8]" /> },
+                  { label: '의사 수', value: `${selectedScenario.num_doctors} 명`, icon: <Stethoscope className="w-4 h-4 text-[#1E5AA8]" /> },
+                  { label: '간호사 수', value: `${selectedScenario.num_nurses} 명`, icon: <Users className="w-4 h-4 text-[#1E5AA8]" /> },
+                  { label: '병상 수', value: selectedScenario.num_beds === null ? '∞ (무한)' : `${selectedScenario.num_beds} 개`, icon: <Layers className="w-4 h-4 text-[#1E5AA8]" /> },
+                  { label: '시뮬레이션 시간', value: `${selectedScenario.sim_hours} 시간`, icon: <Clock className="w-4 h-4 text-[#1E5AA8]" /> },
+                  { label: '의사 처리율 (μ)', value: `${selectedScenario.doctor_mu} 명/h`, icon: <Sparkles className="w-4 h-4 text-[#1E5AA8]" /> },
+                ].map((item) => (
+                  <div key={item.label} className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 space-y-1">
+                    <div className="flex items-center space-x-1 text-slate-500">
+                      {item.icon}
+                      <span className="text-[10px] font-medium">{item.label}</span>
+                    </div>
+                    <p className="text-sm font-bold text-[#0B1F3A]">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* KPI 결과 그리드 */}
+            <div>
+              <p className="text-xs font-semibold text-[#1E5AA8] uppercase tracking-wider mb-2 flex items-center space-x-1">
+                <LineChartIcon className="w-3.5 h-3.5" />
+                <span>KPI 결과 (의사 단계)</span>
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {[
+                  { label: '가동률 (ρ)', value: `${(selectedScenario.doctor_rho * 100).toFixed(1)}%` },
+                  { label: '대기시간 Wq', value: `${selectedScenario.doctor_wq_min} 분` },
+                  { label: '체류시간 W', value: `${selectedScenario.doctor_w_min} 분` },
+                  { label: '대기환자 Lq', value: `${selectedScenario.doctor_lq.toFixed(2)} 명` },
+                  { label: '재원환자 L', value: `${selectedScenario.doctor_l.toFixed(2)} 명` },
+                ].map((kpi) => (
+                  <div key={kpi.label} className="bg-white border border-[#E2E8F0] rounded-lg p-3">
+                    <p className="text-[10px] text-slate-500 mb-1">{kpi.label}</p>
+                    <p className="text-xl font-bold text-[#0B1F3A]">{kpi.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 하단 버튼 */}
+            <div className="flex justify-end space-x-2 pt-2 border-t border-[#E2E8F0]">
+              <button
+                onClick={() => setSelectedScenario(null)}
+                className="px-4 py-2 text-sm border border-[#E2E8F0] rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                닫기
+              </button>
+              <button
+                onClick={() => handleApplyScenario(selectedScenario)}
+                className="px-4 py-2 text-sm bg-[#1E5AA8] hover:bg-[#154687] text-white rounded-lg transition-colors flex items-center space-x-1.5 font-semibold cursor-pointer shadow-sm"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>이 파라미터로 시뮬레이션 적용</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* -------------------------------------------------------------------- */}
       {/* Supabase Config Modal */}
