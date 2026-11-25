@@ -98,6 +98,15 @@ export interface TestResult {
   tableMissing?: boolean;
 }
 
+function makeHeaders(anonKey: string): Record<string, string> {
+  return {
+    apikey: anonKey,
+    Authorization: `Bearer ${anonKey}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+}
+
 export async function testSupabaseConnection(url: string, anonKey: string): Promise<TestResult> {
   const cleanUrl = (url || '').trim().replace(/\/$/, '');
   const cleanKey = (anonKey || '').trim();
@@ -121,31 +130,23 @@ export async function testSupabaseConnection(url: string, anonKey: string): Prom
   }
 
   try {
-    const client = createClient(cleanUrl, cleanKey);
-    const { data, error } = await client
-      .from('simulation_runs')
-      .select('*')
-      .limit(1);
+    const res = await fetch(`${cleanUrl}/rest/v1/simulation_runs?select=id&limit=1`, {
+      headers: makeHeaders(cleanKey),
+    });
 
-    if (error) {
-      const msg = error.message || '';
-      if (
-        error.code === '42P01' ||
-        error.code === 'PGRST204' ||
-        error.code === 'PGRST205' ||
-        msg.includes('does not exist') ||
-        msg.includes('not found') ||
-        msg.includes('relation')
-      ) {
-        return {
-          ok: false,
-          tableMissing: true,
-          message: 'Supabase 서버 연결은 성공했습니다! 하지만 "simulation_runs" 테이블이 아직 없습니다. 아래 안내에 따라 SQL을 1회 실행해주세요.',
-        };
-      }
+    if (res.status === 404 || res.status === 406) {
       return {
         ok: false,
-        message: `연결 오류 (${error.code || 'FAIL'}): ${msg}`,
+        tableMissing: true,
+        message: 'Supabase 서버 연결은 성공했습니다! 하지만 "simulation_runs" 테이블이 아직 없습니다. 아래 안내에 따라 SQL을 1회 실행해주세요.',
+      };
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return {
+        ok: false,
+        message: `연결 오류 (HTTP ${res.status}): ${errText.substring(0, 200)}`,
       };
     }
 
@@ -161,95 +162,64 @@ export async function testSupabaseConnection(url: string, anonKey: string): Prom
   }
 }
 
+export interface FetchResult {
+  data: CloudScenario[];
+  isCloud: boolean;
+  error?: string;
+}
+
 /**
  * Fetch scenarios from Supabase or fallback to localStorage.
+ * 반드시 클라이언트(브라우저)에서만 호출해야 합니다.
  */
-export async function fetchScenarios(): Promise<{ data: CloudScenario[]; isCloud: boolean }> {
-  const client = getSupabaseClient();
-  if (client) {
+export async function fetchScenarios(): Promise<FetchResult> {
+  // SSR/SSG 환경에서는 빈 배열 반환 (useEffect에서만 호출되어야 함)
+  if (typeof window === 'undefined') {
+    return { data: [], isCloud: false };
+  }
+
+  const cfg = getStoredSupabaseConfig();
+  const cleanUrl = (cfg.url || '').trim().replace(/\/$/, '');
+  const cleanKey = (cfg.anonKey || '').trim();
+
+  if (cleanUrl && cleanKey) {
     try {
-      const { data, error } = await client
-        .from('simulation_runs')
-        .select('*')
-        .order('id', { ascending: false });
+      const res = await fetch(`${cleanUrl}/rest/v1/simulation_runs?select=*&order=id.desc`, {
+        headers: makeHeaders(cleanKey),
+      });
 
-      if (!error && data && data.length >= 0) {
-        return { data: data as CloudScenario[], isCloud: true };
+      if (res.ok) {
+        const data: CloudScenario[] = await res.json();
+        return { data, isCloud: true };
       }
-    } catch (e) {
-      console.warn('Supabase query error, using local fallback:', e);
+
+      const errText = await res.text();
+      const errMsg = `Supabase 오류 (HTTP ${res.status}): ${errText.substring(0, 200)}`;
+      console.warn('Supabase query error, using local fallback:', errMsg);
+
+      // 로컬 폴백
+      const raw = localStorage.getItem(STORAGE_KEY_SCENARIOS);
+      if (raw) {
+        try { return { data: JSON.parse(raw), isCloud: false, error: errMsg }; } catch {}
+      }
+      return { data: [], isCloud: false, error: errMsg };
+    } catch (e: any) {
+      const errMsg = `네트워크 오류: ${e?.message ?? String(e)}`;
+      console.warn('Supabase query exception, using local fallback:', errMsg);
+      const raw = localStorage.getItem(STORAGE_KEY_SCENARIOS);
+      if (raw) {
+        try { return { data: JSON.parse(raw), isCloud: false, error: errMsg }; } catch {}
+      }
+      return { data: [], isCloud: false, error: errMsg };
     }
   }
 
-  // Local fallback
-  if (typeof window !== 'undefined') {
-    const raw = localStorage.getItem(STORAGE_KEY_SCENARIOS);
-    if (raw) {
-      try {
-        return { data: JSON.parse(raw), isCloud: false };
-      } catch {}
-    }
+  // Supabase 미설정 → 로컬 localStorage 폴백
+  const raw = localStorage.getItem(STORAGE_KEY_SCENARIOS);
+  if (raw) {
+    try { return { data: JSON.parse(raw), isCloud: false }; } catch {}
   }
-
-  // Default seed scenarios if empty
-  const defaultSeeds: CloudScenario[] = [
-    {
-      id: 1,
-      scenario_name: '시나리오 A: 정상 운영 (안정 상태, rho ≈ 0.78)',
-      created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-      arrival_rate: 3.5,
-      doctor_mu: 1.5,
-      num_doctors: 3,
-      nurse_mu: 1.0,
-      num_nurses: 6,
-      num_beds: 15,
-      sim_hours: 48,
-      doctor_rho: 0.778,
-      doctor_wq_min: 17.5,
-      doctor_w_min: 57.5,
-      doctor_lq: 1.02,
-      doctor_l: 3.35,
-      status: 'OK',
-    },
-    {
-      id: 2,
-      scenario_name: '시나리오 B: 병목 주의 (가동률 85% 초과, rho ≈ 0.86)',
-      created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-      arrival_rate: 3.5,
-      doctor_mu: 1.35,
-      num_doctors: 3,
-      nurse_mu: 1.0,
-      num_nurses: 6,
-      num_beds: 15,
-      sim_hours: 48,
-      doctor_rho: 0.864,
-      doctor_wq_min: 34.2,
-      doctor_w_min: 78.6,
-      doctor_lq: 2.15,
-      doctor_l: 4.58,
-      status: 'WARNING',
-    },
-    {
-      id: 3,
-      scenario_name: '시나리오 C: 과부하 및 시스템 불안정 (rho = 1.00)',
-      created_at: new Date(Date.now() - 3600000 * 1).toISOString(),
-      arrival_rate: 4.5,
-      doctor_mu: 1.5,
-      num_doctors: 3,
-      nurse_mu: 1.0,
-      num_nurses: 6,
-      num_beds: 15,
-      sim_hours: 48,
-      doctor_rho: 1.0,
-      doctor_wq_min: 98.4,
-      doctor_w_min: 138.4,
-      doctor_lq: 7.38,
-      doctor_l: 10.38,
-      status: 'UNSTABLE',
-    },
-  ];
-
-  return { data: defaultSeeds, isCloud: false };
+  return { data: [], isCloud: false };
 }
 
 /**
@@ -258,18 +228,28 @@ export async function fetchScenarios(): Promise<{ data: CloudScenario[]; isCloud
 export async function saveScenario(
   scenario: Omit<CloudScenario, 'id' | 'created_at'>
 ): Promise<{ success: boolean; isCloud: boolean }> {
-  const newRecord: CloudScenario = {
-    ...scenario,
-    created_at: new Date().toISOString(),
-  };
+  const cfg = getStoredSupabaseConfig();
+  const cleanUrl = (cfg.url || '').trim().replace(/\/$/, '');
+  const cleanKey = (cfg.anonKey || '').trim();
 
-  const client = getSupabaseClient();
-  if (client) {
+  const { id: _id, created_at: _ca, ...body } = { ...scenario, id: undefined, created_at: undefined };
+
+  if (cleanUrl && cleanKey) {
     try {
-      const { error } = await client.from('simulation_runs').insert([newRecord]);
-      if (!error) {
+      const res = await fetch(`${cleanUrl}/rest/v1/simulation_runs`, {
+        method: 'POST',
+        headers: {
+          ...makeHeaders(cleanKey),
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.ok || res.status === 201) {
         return { success: true, isCloud: true };
       }
+      const errText = await res.text();
+      console.warn('Supabase insert error, falling back to local:', res.status, errText);
     } catch (e) {
       console.warn('Supabase insert error, falling back to local:', e);
     }
@@ -279,7 +259,7 @@ export async function saveScenario(
   if (typeof window !== 'undefined') {
     const { data } = await fetchScenarios();
     const nextId = (data[0]?.id ? Number(data[0].id) : 0) + 1;
-    const updated = [{ ...newRecord, id: nextId }, ...data];
+    const updated = [{ ...scenario, id: nextId, created_at: new Date().toISOString() }, ...data];
     localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(updated));
     return { success: true, isCloud: false };
   }
@@ -291,11 +271,17 @@ export async function saveScenario(
  * Delete a scenario.
  */
 export async function deleteScenario(id: string | number): Promise<boolean> {
-  const client = getSupabaseClient();
-  if (client) {
+  const cfg = getStoredSupabaseConfig();
+  const cleanUrl = (cfg.url || '').trim().replace(/\/$/, '');
+  const cleanKey = (cfg.anonKey || '').trim();
+
+  if (cleanUrl && cleanKey) {
     try {
-      const { error } = await client.from('simulation_runs').delete().eq('id', id);
-      if (!error) return true;
+      const res = await fetch(`${cleanUrl}/rest/v1/simulation_runs?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: makeHeaders(cleanKey),
+      });
+      if (res.ok) return true;
     } catch {}
   }
 
